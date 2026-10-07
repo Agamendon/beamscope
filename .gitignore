@@ -1,0 +1,18 @@
+# Build outputs
+/build/
+node_modules/
+beamscope/dist/
+beamscope/src-tauri/target/
+beamscope/src-tauri/gen/schemas/
+
+# Reverse-engineering scratch: decompiled DataRay code, Ghidra dumps, camera frames, screenshots.
+# DataRay's code is theirs; keep it out of the repo.
+/re/
+mcp_schema.json
+ocx_imports.txt
+
+# DataRay's own installer
+/src/
+
+*.log
+.DS_Store
