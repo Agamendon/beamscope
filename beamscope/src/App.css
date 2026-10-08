@@ -668,3 +668,64 @@ input[type="number"]::-webkit-inner-spin-button {
   text-align: left;
   font-size: 10px;
 }
+
+/* ---------- orientation ---------- */
+
+.orientation {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.orient-preview {
+  width: 54px;
+  height: 54px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.orient-preview span {
+  font: 700 30px/1 Georgia, serif;
+  color: var(--accent);
+  transition: transform 0.2s;
+}
+.orient-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.orient-body button {
+  padding: 3px 8px;
+}
+.orient-body button.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.orient-state {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+}
+button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+}
+.orient-badge {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  background: rgba(11, 13, 16, 0.8);
+  border: 1px solid #256a92;
+  color: var(--accent);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 12px;
+  pointer-events: none;
+}

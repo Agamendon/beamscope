@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::analysis::{self, AnalysisSettings, Metrics};
-use crate::camera::{self, bladecam2::SkipFrame, Binning, Camera, CameraInfo, Frame, Roi};
+use crate::camera::{self, bladecam2::SkipFrame, Binning, Camera, CameraInfo, Frame, Orientation, Roi};
 use crate::wcf;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -31,6 +31,8 @@ pub struct Config {
     pub subtract_background: bool,
     pub analysis: AnalysisSettings,
     pub wavelength_nm: f64,
+    /// Camera mounting: frames are rotated / mirrored into the lab orientation before analysis.
+    pub orientation: Orientation,
 }
 
 impl Default for Config {
@@ -47,6 +49,7 @@ impl Default for Config {
             subtract_background: false,
             analysis: AnalysisSettings::default(),
             wavelength_nm: 1064.0,
+            orientation: Orientation::default(),
         }
     }
 }
@@ -132,9 +135,19 @@ impl LogRow {
 }
 
 struct Latest {
-    raw: Frame,
-    processed: Frame,
+    /// Averaged / background-subtracted frame in the sensor's own orientation (what `.wcf` stores).
+    sensor: Frame,
+    /// `sensor` rotated / mirrored into the lab orientation: what is analyzed, shown and exported.
+    view: Frame,
     metrics: Metrics,
+}
+
+impl Latest {
+    fn new(sensor: Frame, cfg: &Config) -> Self {
+        let view = cfg.orientation.apply(&sensor);
+        let metrics = analysis::analyze(&view, &cfg.analysis);
+        Self { sensor, view, metrics }
+    }
 }
 
 #[derive(Default)]
@@ -265,12 +278,11 @@ impl Engine {
         }
         new.average = new.average.clamp(1, 100);
         *self.s.cfg.lock() = new.clone();
-        // Re-analyze a still (file) frame with the new settings.
+        // Re-orient and re-analyze a still (file) frame with the new settings.
         if !self.s.running.load(Ordering::SeqCst) {
             let latest = self.s.latest.lock().clone();
             if let Some(l) = latest {
-                let metrics = analysis::analyze(&l.processed, &new.analysis);
-                *self.s.latest.lock() = Some(Arc::new(Latest { raw: l.raw.clone(), processed: l.processed.clone(), metrics }));
+                *self.s.latest.lock() = Some(Arc::new(Latest::new(l.sensor.clone(), &new)));
             }
         }
         Ok(new)
@@ -307,7 +319,7 @@ impl Engine {
     pub fn latest_packet(&self, since: u64) -> Vec<u8> {
         let latest = self.s.latest.lock().clone();
         match latest {
-            Some(l) if l.processed.index != since || since == u64::MAX => {
+            Some(l) if l.view.index != since || since == u64::MAX => {
                 let fps = self.s.stats.lock().0;
                 let source = self.s.source.lock().clone();
                 build_packet(&l, fps, &source)
@@ -341,8 +353,7 @@ impl Engine {
         let file = wcf::read(path)?;
         let frame = file.frames.into_iter().next().ok_or_else(|| anyhow!("empty file"))?;
         let cfg = self.s.cfg.lock().clone();
-        let metrics = analysis::analyze(&frame, &cfg.analysis);
-        *self.s.latest.lock() = Some(Arc::new(Latest { raw: frame.clone(), processed: frame, metrics }));
+        *self.s.latest.lock() = Some(Arc::new(Latest::new(frame, &cfg)));
         *self.s.source.lock() = format!("file:{}", path.display());
         Ok(file.version)
     }
@@ -351,9 +362,11 @@ impl Engine {
         self.s.latest.lock().clone().ok_or_else(|| anyhow!("no frame yet"))
     }
 
+    /// Saves the frame in the sensor's own orientation (like DataRay does), so the file opens the
+    /// same way in DataRay and BeamScope re-applies the mounting orientation when it is reopened.
     pub fn save_wcf(&self, path: &Path) -> Result<()> {
         let l = self.latest()?;
-        let m = &l.metrics;
+        let m = &analysis::analyze(&l.sensor, &self.s.cfg.lock().analysis);
         let st = wcf::FrameStats {
             peak: m.peak as u32,
             min: m.min as u32,
@@ -365,12 +378,12 @@ impl Engine {
             Some(m) if m.contains("XHR") => 0x2b,
             _ => 0x2a,
         };
-        wcf::write(path, &[(l.processed.clone(), st)], ty)
+        wcf::write(path, &[(l.sensor.clone(), st)], ty)
     }
 
     pub fn export_image_csv(&self, path: &Path) -> Result<()> {
         let l = self.latest()?;
-        let f = &l.processed;
+        let f = &l.view;
         let mut s = String::with_capacity(f.width * f.height * 6);
         for y in 0..f.height {
             let row = &f.data[y * f.width..(y + 1) * f.width];
@@ -538,8 +551,8 @@ fn run(s: Arc<Shared>) {
             }
         }
 
-        let processed = Frame { data, ..raw.clone() };
-        let metrics = analysis::analyze(&processed, &cfg.analysis);
+        let latest = Latest::new(Frame { data, ..raw.clone() }, &cfg);
+        let metrics = latest.metrics.clone();
 
         // Auto-exposure on the raw frame (DataRay's rule, FUN_180039920) and auto black level.
         if cfg.auto_exposure || cfg.auto_black {
@@ -566,12 +579,12 @@ fn run(s: Arc<Shared>) {
 
         {
             let mut log = s.log.lock();
-            if log.enabled && processed.timestamp_ms - log.last_ms >= log.interval_ms {
-                log.last_ms = processed.timestamp_ms;
-                log.rows.push(LogRow::from(&processed, &metrics));
+            if log.enabled && latest.view.timestamp_ms - log.last_ms >= log.interval_ms {
+                log.last_ms = latest.view.timestamp_ms;
+                log.rows.push(LogRow::from(&latest.view, &metrics));
             }
         }
-        *s.latest.lock() = Some(Arc::new(Latest { raw, processed, metrics }));
+        *s.latest.lock() = Some(Arc::new(latest));
     }
     s.running.store(false, Ordering::SeqCst);
     if let Some(cam) = s.cam.lock().as_mut() {
@@ -628,7 +641,7 @@ fn adjust(s: &Shared, cfg: &Config, m: &Metrics) {
 /// Packet layout (little endian):
 /// `"BSF1"` · u32 json_len · json · pad→4 · u16 display[dw·dh] · pad→4 · f32 profile_x[w] · f32 profile_y[h]
 fn build_packet(l: &Latest, fps: f64, source: &str) -> Vec<u8> {
-    let f = &l.processed;
+    let f = &l.view;
     let m = &l.metrics;
     let scale = ((f.width.max(f.height) + 1279) / 1280).max(1);
     let (dw, dh) = (f.width / scale, f.height / scale);
@@ -724,6 +737,16 @@ mod tests {
         let m = within("metrics", { let e = e.clone(); move || e.metrics() }).unwrap();
         assert!(m.principal_axes && m.aperture.is_some());
         within("log", { let e = e.clone(); move || { e.log_start(0.0); std::thread::sleep(Duration::from_millis(300)); e.log_stop(); e.log_rows(0).len() } });
+        // Rotating 90° swaps the image axes, and with them the X/Y widths.
+        let before = e.metrics().unwrap();
+        let mut cfg = e.status().config;
+        cfg.analysis.principal_axes = false;
+        cfg.orientation = Orientation { rotate: 90, ..Default::default() };
+        within("set_config(orientation)", { let e = e.clone(); move || e.set_config(cfg) }).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let after = e.metrics().unwrap();
+        assert_eq!((after.width, after.height), (before.height, before.width));
+        assert!((after.d4s_x_um - before.d4s_y_um).abs() / before.d4s_y_um < 0.1, "{} vs {}", after.d4s_x_um, before.d4s_y_um);
         within("stop", { let e = e.clone(); move || e.stop() });
         within("disconnect", { let e = e.clone(); move || e.disconnect() });
         assert!(!e.status().connected);

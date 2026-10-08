@@ -77,6 +77,11 @@ script. Velopack upgrades installations in place.
 - **Files:** opens `.wcf` files from DataRay 5.x–8.x and saves `.wcf` that DataRay can load. Also exports a PNG
   snapshot, pixel CSV and profile CSV.
 
+- **Camera orientation:** rotate the view in 90° steps and/or mirror it to match how the camera is mounted.
+  The image, X/Y profiles, centroid and all X/Y widths then follow the lab axes. The setting is remembered
+  between sessions. `.wcf` files are still saved in the sensor's own orientation, so they open the same
+  way in DataRay, and BeamScope re-applies the rotation when it reopens them.
+
 Keyboard: `Space` start/stop, `Ctrl+O` open, `Ctrl+S` save.
 
 ## Validation

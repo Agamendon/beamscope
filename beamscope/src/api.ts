@@ -19,6 +19,13 @@ export interface AnalysisSettings {
   principalAxes: boolean;
 }
 
+/** Camera mounting: mirror (in sensor coordinates) first, then rotate clockwise. */
+export interface Orientation {
+  rotate: number;
+  flipH: boolean;
+  flipV: boolean;
+}
+
 export interface Config {
   exposureMs: number;
   autoExposure: boolean;
@@ -31,6 +38,7 @@ export interface Config {
   subtractBackground: boolean;
   analysis: AnalysisSettings;
   wavelengthNm: number;
+  orientation: Orientation;
 }
 
 export interface CameraInfo {

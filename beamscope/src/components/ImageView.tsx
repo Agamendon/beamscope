@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FramePacket } from "../api";
+import type { FramePacket, Orientation } from "../api";
+import { describeOrientation } from "./OrientationControl";
 import { ColormapName, lut } from "../colormaps";
 import { fmtUm } from "../format";
 
@@ -93,9 +94,10 @@ function initGl(canvas: HTMLCanvasElement): GlState {
 interface Props {
   frame: FramePacket | null;
   opts: DisplayOptions;
+  orientation?: Orientation;
 }
 
-export function ImageView({ frame, opts }: Props) {
+export function ImageView({ frame, opts, orientation }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const gls = useRef<GlState | null>(null);
@@ -311,6 +313,11 @@ export function ImageView({ frame, opts }: Props) {
       {hover && frame && (
         <div className="hover-readout">
           x {fmtUm(hover.x * px)} · y {fmtUm(hover.y * py)} · {((hover.v / 65535) * 100).toFixed(1)}%
+        </div>
+      )}
+      {frame && describeOrientation(orientation) && (
+        <div className="orient-badge" title="Camera orientation (left panel)">
+          ⟳ {describeOrientation(orientation)}
         </div>
       )}
       {!frame && <div className="empty-hint">Connect a camera or open a .wcf file</div>}

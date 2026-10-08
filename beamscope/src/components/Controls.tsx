@@ -3,6 +3,9 @@ import type { Binning, Config, Status } from "../api";
 import { COLORMAPS, ColormapName, cssGradient } from "../colormaps";
 import { fmtMs } from "../format";
 import type { DisplayOptions } from "./ImageView";
+import { OrientationControl } from "./OrientationControl";
+
+export const ORIENTATION_KEY = "beamscope.orientation";
 
 interface Props {
   status: Status | null;
@@ -126,6 +129,21 @@ export function Controls({ status, config, patch, display, setDisplay, onCapture
           </select>
         </label>
         <NumberField label="Average" value={config.average} min={1} max={100} suffix="frames" onCommit={(v) => patch({ average: Math.round(v) })} />
+      </Section>
+
+      <Section title="Camera orientation">
+        <p className="hint">Match the image to how the camera is mounted. X/Y profiles and all X/Y numbers follow.</p>
+        <OrientationControl
+          value={config.orientation ?? { rotate: 0, flipH: false, flipV: false }}
+          onChange={(o) => {
+            patch({ orientation: o });
+            try {
+              localStorage.setItem(ORIENTATION_KEY, JSON.stringify(o));
+            } catch {
+              /* ignore */
+            }
+          }}
+        />
       </Section>
 
       <Section title="Background">

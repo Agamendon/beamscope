@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api, Config, FramePacket, Status } from "./api";
-import { Controls } from "./components/Controls";
+import { Controls, ORIENTATION_KEY } from "./components/Controls";
 import { DisplayOptions, ImageView } from "./components/ImageView";
 import { LogPanel } from "./components/LogPanel";
 import { M2Panel } from "./components/M2Panel";
@@ -55,11 +55,24 @@ export default function App() {
   }, []);
 
   // Status polling.
+  const orientationRestored = useRef(false);
   const pollStatus = useCallback(async () => {
     try {
       const s = await api.status();
       setStatus(s);
       setConfig(s.config);
+      // The backend starts with the default orientation; restore the saved camera mounting once.
+      if (!orientationRestored.current) {
+        orientationRestored.current = true;
+        try {
+          const saved = JSON.parse(localStorage.getItem(ORIENTATION_KEY) ?? "null");
+          if (saved && JSON.stringify(saved) !== JSON.stringify(s.config.orientation)) {
+            setConfig(await api.updateConfig({ orientation: saved }));
+          }
+        } catch {
+          /* ignore */
+        }
+      }
     } catch (e) {
       console.error(e);
     }
@@ -287,7 +300,7 @@ export default function App() {
       />
 
       <main className="main">
-        <ImageView frame={frame} opts={display} />
+        <ImageView frame={frame} opts={display} orientation={config?.orientation} />
         <div className="bottom">
           <nav className="tabs">
             <button className={tab === "profiles" ? "on" : ""} onClick={() => setTab("profiles")}>
