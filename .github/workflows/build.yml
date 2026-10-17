@@ -1,0 +1,112 @@
+# Tests on every push / PR. On a version tag (e.g. `git tag v0.3.0 && git push --tags`) it also
+# builds the Velopack installer and publishes it as a GitHub Release. "Run workflow" builds an
+# installer as a downloadable artifact without publishing anything.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # create releases
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: beamscope/src-tauri
+          shared-key: beamscope
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: beamscope/package-lock.json
+
+      - name: Frontend type-check
+        working-directory: beamscope
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+
+      - name: Rust tests
+        working-directory: beamscope/src-tauri
+        run: cargo test --release --lib
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: beamscope/src-tauri
+          shared-key: beamscope
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: beamscope/package-lock.json
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install vpk (Velopack packager)
+        shell: pwsh
+        run: |
+          dotnet tool install -g vpk --version 1.2.161
+          "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $v = "${{ github.ref_name }}".TrimStart("v")
+          } else {
+            $v = (Get-Content beamscope/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building BeamScope $v"
+
+      - name: Build installer
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - name: Name release files
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/releases/BeamScope-win-Setup.exe "dist/BeamScope-Setup-$v.exe"
+          Copy-Item build/releases/BeamScope-win-Portable.zip "dist/BeamScope-Portable-$v.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BeamScope-${{ steps.version.outputs.version }}
+          path: dist/*
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: BeamScope ${{ steps.version.outputs.version }}
+          files: dist/*
+          generate_release_notes: true

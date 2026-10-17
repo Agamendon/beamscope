@@ -30,8 +30,10 @@ velopack = "1.2.161"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
-codegen-units = 1
-lto = true
+# Thin LTO + parallel codegen: a fraction of the build time of full LTO with codegen-units = 1,
+# for a practically identical binary in this app (the hot loops are simple and get vectorized).
+codegen-units = 16
+lto = "thin"
 opt-level = 3
 panic = "unwind"
 strip = true

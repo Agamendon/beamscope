@@ -16,3 +16,7 @@ ocx_imports.txt
 
 *.log
 .DS_Store
+
+# Installers are built by GitHub Actions and published as Releases
+/installer/
+/dist/

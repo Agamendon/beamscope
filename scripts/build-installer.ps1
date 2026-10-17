@@ -1,10 +1,15 @@
-# Builds installer\BeamScope-Setup.exe (Velopack, per-user install, no admin needed).
+# Builds the BeamScope installer (Velopack: per-user install, no admin needed).
+# GitHub Actions runs this on every version tag (see .github/workflows/build.yml); you normally
+# don't need to run it yourself.
 #
-# Needs on the BUILD machine only: Rust, Node.js, .NET 8 SDK and vpk:
+# Local use needs Rust, Node.js 20+, the .NET 8 SDK and vpk:
 #   winget install Microsoft.DotNet.SDK.8
-#   dotnet tool install -g vpk
+#   dotnet tool install -g vpk --version 1.2.161
 #
-# usage:  powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
+# usage:  powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1 [-Version 1.2.3]
+#   -Version  overrides the version from beamscope\src-tauri\tauri.conf.json (CI passes the tag).
+# Output:  build\releases\BeamScope-win-Setup.exe (+ portable zip and Velopack update files)
+param([string]$Version)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $app = Join-Path $root "beamscope"
@@ -13,13 +18,22 @@ $stage = Join-Path $root "build\pack"
 $out = Join-Path $root "build\releases"
 $env:PATH += ";$env:USERPROFILE\.dotnet\tools;C:\Program Files\dotnet"
 
-$version = (Get-Content (Join-Path $tauri "tauri.conf.json") -Raw | ConvertFrom-Json).version
-Write-Host "== BeamScope $version"
+$confPath = Join-Path $tauri "tauri.conf.json"
+if ($Version) {
+  # Stamp the version into the app (Tauri reads it from tauri.conf.json at build time).
+  $conf = Get-Content $confPath -Raw | ConvertFrom-Json
+  $conf.version = $Version
+  # No byte-order mark: Windows PowerShell's "utf8" adds one, which JSON parsers may reject.
+  [IO.File]::WriteAllText($confPath, ($conf | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding $false))
+} else {
+  $Version = (Get-Content $confPath -Raw | ConvertFrom-Json).version
+}
+Write-Host "== BeamScope $Version"
 
 # 1. Release exe with the web UI embedded (no bundle: Velopack does the packaging).
 Push-Location $app
 try {
-  npm install --no-audit --no-fund
+  if ($env:CI) { npm ci --no-audit --no-fund } else { npm install --no-audit --no-fund }
   if ($LASTEXITCODE) { throw "npm install failed" }
   npm run tauri build -- --no-bundle
   if ($LASTEXITCODE) { throw "tauri build failed" }
@@ -29,21 +43,17 @@ try {
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item (Join-Path $tauri "target\release\beamscope.exe") $stage
-# FTDI's D3XX user-mode DLL for the BladeCam2. Shipping it next to the exe means the camera works
-# even if DataRay's program folder is missing; the BladeCam2 USB driver itself still has to be
-# installed (it comes with DataRay).
-$ftd = Join-Path ${env:ProgramFiles} "DataRay\FTD3XX.dll"
-if (Test-Path $ftd) { Copy-Item $ftd (Join-Path $stage "ftd3xx.dll") }
-else { Write-Warning "FTD3XX.dll not found in DataRay's folder; installer will rely on the target PC's copy" }
+# FTDI's D3XX DLL for the BladeCam2 (see vendor\ftdi\README.md).
+Copy-Item (Join-Path $root "vendor\ftdi\FTD3XX.dll") (Join-Path $stage "ftd3xx.dll")
 
-# 3. Pack. We ship only the full Setup.exe (no update feed), so start from a clean output folder;
-#    otherwise vpk refuses to re-pack a version it has already packed.
+# 3. Pack. Each build is a full standalone installer, so start from a clean output folder
+#    (vpk also refuses to re-pack a version it has already packed).
+#    --framework webview2 installs the WebView2 runtime on PCs that lack it (rare on Win 11).
 Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
-#     --framework webview2 installs the WebView2 runtime on PCs that lack it (rare on Win 11).
 vpk pack `
   --packId BeamScope `
   --runtime win-x64 `
-  --packVersion $version `
+  --packVersion $Version `
   --packTitle BeamScope `
   --packAuthors "BeamScope" `
   --packDir $stage `
@@ -54,8 +64,5 @@ vpk pack `
   --outputDir $out
 if ($LASTEXITCODE) { throw "vpk pack failed" }
 
-# 4. The one file people need, committed to the repo.
-$dest = Join-Path $root "installer"
-New-Item -ItemType Directory -Force $dest | Out-Null
-Copy-Item (Join-Path $out "BeamScope-win-Setup.exe") (Join-Path $dest "BeamScope-Setup.exe") -Force
-Write-Host "== installer\BeamScope-Setup.exe ($([math]::Round((Get-Item (Join-Path $dest 'BeamScope-Setup.exe')).Length / 1MB, 1)) MB)"
+$setup = Join-Path $out "BeamScope-win-Setup.exe"
+Write-Host "== $setup ($([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB)"

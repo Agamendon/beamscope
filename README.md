@@ -6,48 +6,64 @@ BladeCam2 driver of its own, written from protocol details recovered by reverse 
 
 ## Installing
 
-1. Clone the repo and double-click **`installer\BeamScope-Setup.exe`**.
-   It installs for the current user only: no admin rights, no wizard, and it takes a few seconds.
-   It adds BeamScope to the Start menu and the desktop, and launches it.
-2. Windows may show "Windows protected your PC", because the installer isn't code-signed.
+1. Open the repo's **Releases** page on GitHub (right-hand side of the repo page), and download
+   `BeamScope-Setup-<version>.exe` from the latest release.
+2. Double-click it. It installs for the current user only: no admin rights, no wizard, and it takes a
+   few seconds. It adds BeamScope to the Start menu and the desktop, and launches it. Running a newer
+   installer later upgrades in place.
+3. Windows may show "Windows protected your PC", because the installer isn't code-signed.
    Click **More info → Run anyway**.
-3. To uninstall, go to Settings → Apps → Installed apps → BeamScope → Uninstall.
+4. To uninstall, go to Settings → Apps → Installed apps → BeamScope → Uninstall.
+
+There's also a `BeamScope-Portable-<version>.zip`: unzip it anywhere and run `BeamScope.exe`, no install.
 
 **Camera requirements.** The BladeCam2 needs its USB driver, which is installed with DataRay's software.
 If DataRay has ever worked with the camera on that PC, BeamScope will too. FTDI's `ftd3xx.dll` ships
 inside the installer. Close DataRay before connecting: only one program can open the camera at a time.
 Without a camera, **Simulator** shows a synthetic beam.
 
+## Releasing a new version
+
+Builds run in GitHub Actions (`.github/workflows/build.yml`), not on your PC:
+
+- **Every push to `main` (and every pull request)** runs the tests.
+- **Pushing a version tag** builds the installer and publishes it as a GitHub Release, about 15–20
+  minutes later. The version comes from the tag, so there's nothing to edit by hand:
+
+  ```bash
+  git tag v0.3.0
+  git push origin v0.3.0
+  ```
+
+- **Actions → Build → Run workflow** builds an installer without publishing it. Download it from the run's
+  "Artifacts" section.
+
 ## Repository layout
 
 ```
-installer/            BeamScope-Setup.exe: the installer (Velopack), rebuilt by scripts/build-installer.ps1
 beamscope/            Tauri 2 app (Rust backend, React + TypeScript + WebGL frontend)
+.github/workflows/    CI: tests on every push, installer + GitHub Release on version tags
+scripts/              build-installer.ps1 (what CI runs; also works locally)
+vendor/ftdi/          FTDI's FTD3XX.dll, shipped inside the installer
 docs/                 bladecam2-protocol.md: the recovered USB protocol, with Ghidra addresses
 tools/                RE helpers (Ghidra HTTP client, PE string finder, camera probe, UI test drivers)
-scripts/              build-installer.ps1
 capture*.wcf          reference captures saved by DataRay 8.0E70 (used by tests)
 ```
 
 The decompiled DataRay code (`re/decomp`) and DataRay's own installer are deliberately kept out of git.
 
-## Building
+## Developing locally
 
-Needs Rust, Node.js 20+, and for the installer the .NET 8 SDK plus `vpk`:
-
-```bash
-winget install Microsoft.DotNet.SDK.8
-dotnet tool install -g vpk
-```
+Needs Rust and Node.js 20+:
 
 ```bash
-cd beamscope && npm install && npm run tauri dev      # development
+cd beamscope && npm install && npm run tauri dev      # run the app with live reload
 cd beamscope/src-tauri && cargo test --release        # tests
-powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1   # new installer\BeamScope-Setup.exe
 ```
 
-To release a new version, bump `version` in `beamscope/src-tauri/tauri.conf.json` before running the
-script. Velopack upgrades installations in place.
+To build an installer locally as well, install the .NET 8 SDK and `vpk`
+(`winget install Microsoft.DotNet.SDK.8`, `dotnet tool install -g vpk --version 1.2.161`), then run
+`powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1`. The result goes to `build/releases/`.
 
 ## What it does
 
